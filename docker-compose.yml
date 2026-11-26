@@ -1,0 +1,120 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-taskflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-replace-with-a-local-secret}
+      POSTGRES_DB: ${POSTGRES_DB:-taskflow}
+    ports:
+      - "5432:5432"
+    volumes:
+      - taskflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  db_test:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: taskflow_test
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-replace-with-a-test-only-secret}
+      POSTGRES_DB: taskflow_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - taskflow_test_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  migrate:
+    build:
+      context: ./backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-taskflow}:${POSTGRES_PASSWORD:-replace-with-a-local-secret}@db:5432/${POSTGRES_DB:-taskflow}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-development-only-change-this-secret-12345678901234567890}
+      JWT_ISSUER: ${JWT_ISSUER:-taskflow-api}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-taskflow-client}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@taskflow.local}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-taskflow}:${POSTGRES_PASSWORD:-replace-with-a-local-secret}@db:5432/${POSTGRES_DB:-taskflow}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-development-only-change-this-secret-12345678901234567890}
+      JWT_ISSUER: ${JWT_ISSUER:-taskflow-api}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-taskflow-client}
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:5173"]}'
+      EMAIL_VERIFICATION_ENABLED: ${EMAIL_VERIFICATION_ENABLED:-false}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-lax}
+      UPLOAD_DIRECTORY: /var/lib/taskflow/uploads
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5242880}
+      REQUEST_MAX_BYTES: ${REQUEST_MAX_BYTES:-10485760}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@taskflow.local}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:5173}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-http://localhost:5173}
+      OPENROUTER_APP_NAME: ${OPENROUTER_APP_NAME:-TaskFlow}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - taskflow_uploads:/var/lib/taskflow/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  taskflow_db_data:
+  taskflow_test_db_data:
+  taskflow_uploads:
